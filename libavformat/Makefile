@@ -174,6 +174,7 @@ OBJS-$(CONFIG_DFA_DEMUXER)               += dfa.o
 OBJS-$(CONFIG_DFPWM_DEMUXER)             += dfpwmdec.o pcm.o
 OBJS-$(CONFIG_DFPWM_MUXER)               += rawenc.o
 OBJS-$(CONFIG_DHAV_DEMUXER)              += dhav.o
+OBJS-$(CONFIG_DIGICHROME_DEMUXER)        += digichrome.o
 OBJS-$(CONFIG_DIRAC_DEMUXER)             += diracdec.o rawdec.o
 OBJS-$(CONFIG_DIRAC_MUXER)               += rawenc.o
 OBJS-$(CONFIG_DNXHD_DEMUXER)             += dnxhddec.o rawdec.o

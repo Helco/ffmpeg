@@ -128,6 +128,7 @@ extern const AVInputFormat  ff_dfa_demuxer;
 extern const AVInputFormat  ff_dfpwm_demuxer;
 extern const AVOutputFormat ff_dfpwm_muxer;
 extern const AVInputFormat  ff_dhav_demuxer;
+extern const AVInputFormat  ff_digichrome_demuxer;
 extern const AVInputFormat  ff_dirac_demuxer;
 extern const AVOutputFormat ff_dirac_muxer;
 extern const AVInputFormat  ff_dnxhd_demuxer;
