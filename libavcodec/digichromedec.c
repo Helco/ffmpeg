@@ -19,8 +19,6 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavutil/common.h"
-#include "avcodec.h"
 #include "bytestream.h"
 #include "codec_internal.h"
 #include "internal.h"
@@ -401,7 +399,7 @@ static int decode_frame(AVCodecContext *avctx, AVFrame *rframe,
     digiChrome->curHeight = bytestream2_get_byte(data);
     avctx->width = digiChrome->curWidth * 8;
     avctx->height = digiChrome->curHeight * 8;
-    
+
     // ff_reget_buffer warns about changed dimensions, so recreate manually in these cases
     if (digiChrome->curFrame->data[0] &&
         (digiChrome->curWidth != digiChrome->prevWidth ||
@@ -414,7 +412,7 @@ static int decode_frame(AVCodecContext *avctx, AVFrame *rframe,
         return AVERROR(ENOMEM);
     if ((ret = ff_reget_buffer(avctx, digiChrome->curFrame, 0)) < 0)
         return ret;
-    
+
     uint8_t *palette = (uint8_t*)digiChrome->curFrame->data[1];
     for (int i = 0; i < paletteCount; i++, palette += 4) {
         unsigned int color = bytestream2_get_le16u(data);
