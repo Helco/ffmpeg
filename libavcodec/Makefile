@@ -294,6 +294,7 @@ OBJS-$(CONFIG_DCA_ENCODER)             += dcaenc.o dcadata.o dcahuff.o \
                                           dcaadpcm.o
 OBJS-$(CONFIG_DDS_DECODER)             += dds.o
 OBJS-$(CONFIG_DERF_DPCM_DECODER)       += dpcm.o
+OBJS-$(CONFIG_DIGICHROME_DECODER)      += digichromedec.o
 OBJS-$(CONFIG_DIRAC_DECODER)           += diracdec.o dirac.o diracdsp.o diractab.o \
                                           dirac_arith.o dirac_dwt.o dirac_vlc.o
 OBJS-$(CONFIG_DFA_DECODER)             += dfa.o

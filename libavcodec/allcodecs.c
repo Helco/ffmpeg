@@ -93,6 +93,7 @@ extern const FFCodec ff_cscd_decoder;
 extern const FFCodec ff_cyuv_decoder;
 extern const FFCodec ff_dds_decoder;
 extern const FFCodec ff_dfa_decoder;
+extern const FFCodec ff_digichrome_decoder;
 extern const FFCodec ff_dirac_decoder;
 extern const FFCodec ff_dnxhd_encoder;
 extern const FFCodec ff_dnxhd_decoder;
