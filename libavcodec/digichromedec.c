@@ -184,16 +184,19 @@ typedef struct DigiChromeDecoder {
 static int decode_init(AVCodecContext *avctx)
 {
     avctx->pix_fmt = AV_PIX_FMT_PAL8;
+    DigiChromeDecoder *digiChrome = avctx->priv_data;
+    digiChrome->previousFrame = av_frame_alloc();
+    digiChrome->curFrame = av_frame_alloc();
+    if (!digiChrome->previousFrame || !digiChrome->curFrame)
+        return AVERROR(ENOMEM);
     return 0;
 }
 
 static int decode_close(AVCodecContext *avctx)
 {
     DigiChromeDecoder *digiChrome = avctx->priv_data;
-    if (digiChrome->previousFrame)
-        av_frame_unref(digiChrome->previousFrame);
-    if (digiChrome->curFrame)
-        av_frame_unref(digiChrome->curFrame);
+    av_frame_free(&digiChrome->previousFrame);
+    av_frame_free(&digiChrome->curFrame);
     return 0;
 }
 
@@ -242,7 +245,7 @@ static const uint8_t *get_colors(DigiChromeDecoder *digiChrome)
     GetByteContext *data = &digiChrome->data;
     int colorCount = 2 * ColorPairCount[bytestream2_get_byteu(data)];
     const uint8_t *colors = data->buffer;
-    bytestream2_seek(data, colorCount, SEEK_CUR);
+    bytestream2_skip(data, colorCount);
     return colors;
 }
 
@@ -271,7 +274,7 @@ static void decode_block8x8(DigiChromeDecoder *digiChrome, int x, int y,
     }
     else if (type == DIGICHROME_TYPE_COPYFULL) {
         decode_block_copy(digiChrome, x, y, 8, 8, out);
-        bytestream2_get_byteu(data);
+        bytestream2_skip(data, 1);
     }
     else {
         const uint8_t *colors = get_colors(digiChrome);
@@ -289,7 +292,7 @@ static void decode_block8x4(DigiChromeDecoder *digiChrome, int x, int y,
     if (type == DIGICHROME_TYPE_COPYHALF)
     {
         decode_block_copy(digiChrome, x, y, 8, 4, out);
-        bytestream2_get_byteu(data);
+        bytestream2_skip(data, 1);
         return;
     }
 
@@ -313,15 +316,15 @@ static void decode_block4x4(DigiChromeDecoder *digiChrome, int x, int y,
     if (type == DIGICHROME_TYPE_COPYHALF)
     {
         decode_block_copy(digiChrome, x, y, 4, 4, out);
-        bytestream2_get_byteu(data);
+        bytestream2_skip(data, 1);
         return;
     }
 
     const uint8_t *offsets = ColorOffsets4x4 + 8 * Indices[type];
     const uint8_t *colors = get_colors(digiChrome);
-    uint16_t pattern = bytestream2_get_le32u(data);
-    for (int y = 0; y < 4; y++, out += linesize - 8, offsets += 2) {
-        for (int x = 0; x < 8; x++, out++, pattern >>= 1)
+    uint16_t pattern = bytestream2_get_le16u(data);
+    for (int y = 0; y < 4; y++, out += linesize - 4, offsets += 2) {
+        for (int x = 0; x < 4; x++, out++, pattern >>= 1)
             *out = colors[offsets[x / 2] + (pattern & 1)];
     }
 }
@@ -344,7 +347,7 @@ static void decode_block(DigiChromeDecoder *digiChrome, int x, int y,
     }
 
     out += digiChrome->curFrame->linesize[0] * 4;
-    category = bytestream2_peek_byteu(data);
+    category = Categories[bytestream2_peek_byteu(data)];
     if (category == DIGICHROME_CATEGORY_8x4)
         decode_block8x4(digiChrome, x, y, out);
     else {
@@ -353,8 +356,9 @@ static void decode_block(DigiChromeDecoder *digiChrome, int x, int y,
     }
 }
 
-static int decode_blocks(DigiChromeDecoder *digiChrome)
+static int decode_blocks(AVCodecContext *avctx)
 {
+    DigiChromeDecoder *digiChrome = avctx->priv_data;
     GetByteContext *data = &digiChrome->data;
     int repeatCount = 0, repeatOffset;
     uint8_t *outRow = digiChrome->curFrame->data[0];
@@ -371,11 +375,13 @@ static int decode_blocks(DigiChromeDecoder *digiChrome)
                 repeatOffset = bytestream2_tell(data);
             }
 
-            if (bytestream2_get_bytes_left(data) == 0)
+            if (bytestream2_get_bytes_left(data) == 0) {
+                av_log(avctx, AV_LOG_ERROR, "Not enough data in packet\n"); 
                 return AVERROR_INVALIDDATA;
+            }
             decode_block(digiChrome, x, y, out);
         }
-        outRow += digiChrome->curFrame->linesize[0];
+        outRow += digiChrome->curFrame->linesize[0] * 8;
     }
     return 0;
 }
@@ -386,43 +392,37 @@ static int decode_frame(AVCodecContext *avctx, AVFrame *rframe,
     DigiChromeDecoder *digiChrome = avctx->priv_data;
     digiChrome->prevWidth = digiChrome->curWidth;
     digiChrome->prevHeight = digiChrome->curHeight;
-    AVFrame* tmpFrame = digiChrome->previousFrame;
-    digiChrome->previousFrame = digiChrome->curFrame;
-    digiChrome->curFrame = tmpFrame;
 
     GetByteContext *data = &digiChrome->data;
     bytestream2_init(data, avpkt->data, avpkt->size);
-    bytestream2_skip(data, 5);
 
+    bytestream2_skip(data, 5);
     int paletteCount = bytestream2_get_byte(data);
     digiChrome->curWidth = bytestream2_get_byte(data);
     digiChrome->curHeight = bytestream2_get_byte(data);
     avctx->width = digiChrome->curWidth * 8;
     avctx->height = digiChrome->curHeight * 8;
 
-    // ff_reget_buffer warns about changed dimensions, so recreate manually in these cases
-    if (digiChrome->curFrame->data[0] &&
-        (digiChrome->curWidth != digiChrome->prevWidth ||
-        digiChrome->curHeight != digiChrome->prevHeight)) {
-        av_frame_unref(digiChrome->curFrame);
-        digiChrome->curFrame = NULL;
-    }
     int ret;
-    if (!digiChrome->curFrame && !(digiChrome->curFrame = av_frame_alloc()))
-        return AVERROR(ENOMEM);
     if ((ret = ff_reget_buffer(avctx, digiChrome->curFrame, 0)) < 0)
         return ret;
 
     uint8_t *palette = (uint8_t*)digiChrome->curFrame->data[1];
     for (int i = 0; i < paletteCount; i++, palette += 4) {
         unsigned int color = bytestream2_get_le16u(data);
-        palette[0] = (color >> 0) & 0x1F;
-        palette[1] = (color >> 5) & 0x1F;
-        palette[2] = (color >> 10) & 0x1F;
+        palette[0] = ((color >> 0) & 0x1F) << 3;
+        palette[1] = ((color >> 5) & 0x1F) << 3;
+        palette[2] = ((color >> 10) & 0x1F) << 3;
         palette[3] = 0xFF;
     }
+    digiChrome->curFrame->palette_has_changed = paletteCount > 0;
 
-    if ((ret = decode_blocks(digiChrome)) < 0)
+    if ((ret = decode_blocks(avctx)) < 0)
+        return ret;
+    av_frame_unref(digiChrome->previousFrame);
+    if ((ret = av_frame_ref(digiChrome->previousFrame, digiChrome->curFrame)) < 0)
+        return ret;
+    if ((ret = av_frame_ref(rframe, digiChrome->curFrame)) < 0)
         return ret;
     *got_frame = 1;
     return bytestream2_tell(data);

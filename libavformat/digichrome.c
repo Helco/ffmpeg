@@ -90,9 +90,9 @@ static int create_video_stream(AVFormatContext *s, int track)
         return AVERROR(ENOMEM);
     st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
     st->codecpar->codec_id = AV_CODEC_ID_DIGICHROME;
-    avpriv_set_pts_info(st, 64, DIGICHROME_AUDIO_SAMPLE_RATE, 1);
-    st->avg_frame_rate.num = DIGICHROME_DEFAULT_TICKSPERFRAME;
-    st->avg_frame_rate.den = DIGICHROME_AUDIO_SAMPLE_RATE;
+    avpriv_set_pts_info(st, 64, 1, DIGICHROME_AUDIO_SAMPLE_RATE);
+    st->avg_frame_rate.num = DIGICHROME_AUDIO_SAMPLE_RATE;
+    st->avg_frame_rate.den = DIGICHROME_DEFAULT_TICKSPERFRAME;
     
     DigiChromeDemuxContext *digiChrome = s->priv_data;
     digiChrome->videoStreamIndices[track] = st->index;
@@ -109,7 +109,8 @@ static int create_audio_stream(AVFormatContext *s, int track)
     st->codecpar->ch_layout = (AVChannelLayout)AV_CHANNEL_LAYOUT_MONO;
     st->codecpar->bits_per_coded_sample = 8;
     st->codecpar->sample_rate = DIGICHROME_AUDIO_SAMPLE_RATE;
-    avpriv_set_pts_info(st, 64, DIGICHROME_AUDIO_SAMPLE_RATE, 1);
+    st->codecpar->format = AV_SAMPLE_FMT_U8;
+    avpriv_set_pts_info(st, 64, 1, DIGICHROME_AUDIO_SAMPLE_RATE);
     st->avg_frame_rate.num = DIGICHROME_DEFAULT_TICKSPERFRAME;
     st->avg_frame_rate.den = DIGICHROME_AUDIO_SAMPLE_RATE;
 
@@ -145,7 +146,7 @@ static int try_read_audio_duration(AVFormatContext *s, int track)
     if (pb->eof_reached ||
         digiChrome->storedHeader.type != DIGICHROME_TYPE_AUDIO ||
         digiChrome->storedHeader.track != track)
-        return AVERROR(EOF);
+        return AVERROR_EOF;
 
     return digiChrome->storedHeader.size - DIGICHROME_AUDIO_HEADER_SIZE;
 }
@@ -165,6 +166,9 @@ static int read_packet(AVFormatContext *s, AVPacket *pkt)
     }
     digiChrome->storedHeader.type = DIGICHROME_TYPE_NOTSET;
 
+    if (avio_feof(pb))
+        return AVERROR_EOF;
+
     switch (header.type) {
         case DIGICHROME_TYPE_COMBINED:
             if (digiChrome->remainingCombinedSize > 0) {
@@ -183,10 +187,16 @@ static int read_packet(AVFormatContext *s, AVPacket *pkt)
                 }
             }
 
+            int ret;
+            if ((ret = av_get_packet(pb, pkt, header.size)) < 0)
+                return ret;
+
             pkt->stream_index = digiChrome->videoStreamIndices[header.track];
             if (pkt->stream_index < 0)
                 pkt->stream_index = create_video_stream(s, header.track);
-            
+            if (pkt->stream_index < 0)
+                return pkt->stream_index;
+
             pkt->pts = digiChrome->nextTimestamp;
             pkt->duration = try_read_audio_duration(s, header.track);
 
@@ -196,8 +206,7 @@ static int read_packet(AVFormatContext *s, AVPacket *pkt)
                 pkt->duration = DIGICHROME_DEFAULT_TICKSPERFRAME;
                 digiChrome->nextTimestamp += pkt->duration;
             }
-
-            return av_get_packet(pb, pkt, header.size);
+            return 0;
 
         case DIGICHROME_TYPE_AUDIO:
             if (digiChrome->remainingCombinedSize > 0) {
@@ -208,16 +217,20 @@ static int read_packet(AVFormatContext *s, AVPacket *pkt)
                 }
             }
 
+            avio_skip(pb, DIGICHROME_AUDIO_HEADER_SIZE);
+            if ((ret = av_get_packet(pb, pkt, header.size - DIGICHROME_AUDIO_HEADER_SIZE)) < 0)
+                return ret;
+
             pkt->stream_index = digiChrome->audioStreamIndices[header.track];
             if (pkt->stream_index < 0)
                 pkt->stream_index = create_audio_stream(s, header.track);
+            if (pkt->stream_index < 0)
+                return pkt->stream_index;
 
             pkt->pts = digiChrome->nextTimestamp;
-            pkt->duration = header.size - DIGICHROME_AUDIO_HEADER_SIZE;
+            pkt->duration = pkt->size;
             digiChrome->nextTimestamp += pkt->duration;
-
-            avio_skip(pb, DIGICHROME_AUDIO_HEADER_SIZE);
-            return av_get_packet(pb, pkt, pkt->duration);
+            return 0;
 
         default:
             av_log(s, AV_LOG_ERROR, "unknown block (hex = %x)\n", header.type);
